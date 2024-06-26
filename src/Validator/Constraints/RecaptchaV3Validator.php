@@ -6,6 +6,7 @@ namespace Leapt\CoreBundle\Validator\Constraints;
 
 use Psr\Log\LoggerInterface;
 use ReCaptcha\ReCaptcha;
+use ReCaptcha\Response;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
@@ -50,24 +51,27 @@ class RecaptchaV3Validator extends ConstraintValidator
             throw new UnexpectedTypeException($value, 'string');
         }
 
-        if (!$this->isTokenValid($value)) {
-            $this->context->buildViolation($constraint->message)
-                ->setParameter('{{ string }}', $value)
-                ->addViolation();
+        $response = $this->verifyToken($value);
+        if ($response?->isSuccess()) {
+            return;
         }
+
+        $this->context->buildViolation($constraint->message)
+            ->setParameter('{{ string }}', $this->formatValue($value))
+            ->setParameter('{{ score }}', $this->formatValue($response?->getScore()))
+            ->setParameter('{{ errorCodes }}', $this->formatValues($response?->getErrorCodes() ?? []))
+            ->addViolation();
     }
 
-    private function isTokenValid(string $token): bool
+    private function verifyToken(string $token): ?Response
     {
         try {
             $remoteIp = $this->requestStack->getCurrentRequest()->getClientIp();
             $recaptcha = new ReCaptcha($this->secretKey);
 
-            $response = $recaptcha
+            return $recaptcha
                 ->setScoreThreshold($this->scoreThreshold)
                 ->verify($token, $remoteIp);
-
-            return $response->isSuccess();
         } catch (\Exception $exception) {
             $this->logger->error(
                 'reCAPTCHA validator error: ' . $exception->getMessage(),
@@ -76,7 +80,7 @@ class RecaptchaV3Validator extends ConstraintValidator
                 ],
             );
 
-            return false;
+            return null;
         }
     }
 }
